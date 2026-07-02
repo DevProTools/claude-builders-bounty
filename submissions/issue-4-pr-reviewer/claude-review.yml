@@ -1,0 +1,23 @@
+# Copy this to .github/workflows/claude-review.yml in your repo
+name: Claude Code PR Review
+on:
+  pull_request:
+    types: [opened, synchronize]
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Generate review
+        env: {GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        run: |
+          python submissions/issue-4-pr-reviewer/claude_review.py \
+            --pr ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --output review.md
+      - name: Post review
+        env: {GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "$(cat review.md)"
