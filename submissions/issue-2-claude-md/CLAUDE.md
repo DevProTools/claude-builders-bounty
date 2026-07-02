@@ -1,79 +1,132 @@
 # CLAUDE.md — Next.js 15 + SQLite SaaS
 
-## Tech Stack
+## Project Identity
 
-- **Framework:** Next.js 15 (App Router)
-- **Language:** TypeScript (strict mode)
-- **Database:** SQLite via Turso/libSQL
-- **ORM:** Drizzle ORM
-- **Auth:** NextAuth.js v5 (Auth.js)
-- **UI:** Tailwind CSS v4 + shadcn/ui
-- **Package Manager:** pnpm
-- **Validation:** Zod
-- **Testing:** Vitest + Playwright
+A modern SaaS application built with the Next.js 15 App Router,
+SQLite (Turso/libSQL), Drizzle ORM, and Auth.js.
 
-## Project Structure
+## Tech Stack (Exact Versions)
+
+| Layer | Technology | Notes |
+|---|---|---|
+| Framework | Next.js 15.2 (App Router) | React 19, RSC, Server Actions |
+| Language | TypeScript 5.7 (strict) | No `any`, no `// @ts-ignore` |
+| Database | SQLite via Turso/libSQL | Edge-ready, embedded |
+| ORM | Drizzle ORM 0.40+ | Schema-first, type-safe |
+| Auth | Auth.js v5 (NextAuth) | Credentials + OAuth providers |
+| UI | Tailwind CSS v4 + shadcn/ui | Utility-first, accessible |
+| Validation | Zod 3.24 | Runtime + TypeScript types |
+| Forms | React Hook Form + Zod | Client + server validation |
+| Payments | Stripe | Webhook-based lifecycle |
+| Testing | Vitest + Playwright | Unit + E2E |
+| Package | pnpm 10 | Workspace monorepo |
+
+## Project Map
 
 ```
-src/
-├── app/            # Next.js App Router pages & API routes
-├── components/     # Shared React components (shadcn)
-├── db/             # Drizzle schema + migrations
-│   ├── schema/     # Table definitions
-│   └── migrations/ # Auto-generated SQL migrations
-├── lib/            # Utility functions (auth, payments, email)
-├── actions/        # Server Actions (Zod-validated)
-├── hooks/          # Shared React hooks
-└── types/          # TypeScript type definitions
+├── src/
+│   ├── app/                    # App Router: routes, layouts, pages
+│   │   ├── (auth)/             #   Auth group (login, register)
+│   │   ├── (dashboard)/        #   Protected dashboard routes
+│   │   ├── api/                #   Route handlers (REST)
+│   │   └── layout.tsx          #   Root layout
+│   ├── components/             # Shared UI (shadcn + custom)
+│   │   ├── ui/                 #   Base primitives (button, input, card)
+│   │   └── forms/              #   Form components
+│   ├── db/                     # Database layer
+│   │   ├── schema/             #   Drizzle table definitions
+│   │   ├── migrations/         #   Auto-generated SQL migrations
+│   │   ├── index.ts            #   DB client
+│   │   └── seed.ts             #   Seed data
+│   ├── lib/                    # Core utilities
+│   │   ├── auth.ts             #   Auth.js config
+│   │   ├── stripe.ts           #   Stripe client
+│   │   ├── email.ts            #   Email service
+│   │   └── utils.ts            #   Shared helpers
+│   ├── actions/                # Server Actions (Zod-in/out)
+│   ├── hooks/                  # React hooks
+│   └── types/                  # Shared TS types
+├── e2e/                        # Playwright tests
+├── drizzle.config.ts
+├── next.config.ts
+├── tailwind.config.ts
+└── tsconfig.json (strict: true)
 ```
 
-## Naming Conventions
+## Architecture Rules
 
-- **Files:** kebab-case (e.g., `user-profile.tsx`)
-- **Components:** PascalCase
-- **Functions:** camelCase
-- **DB tables:** snake_case (e.g., `user_sessions`)
-- **API routes:** RESTful plural (e.g., `app/api/users/[id]/route.ts`)
-- **Server Actions:** verb-noun (e.g., `createUser`, `updateProfile`)
-- **Environment variables:** UPPER_SNAKE_CASE prefixed with `NEXT_PUBLIC_` if client-side
+1. **Server-first:** All components are RSC by default. Add `"use client"` only for:
+   - Interactivity (onClick, onChange, useState, useEffect)
+   - Browser-only APIs (localStorage, IntersectionObserver)
+   - Context providers
 
-## Database Rules
+2. **Data fetching:** Fetch in Server Components or Server Actions:
+   ```tsx
+   // ✅ Good: server component fetch
+   export default async function Page() {
+     const data = await db.query.users.findMany();
+     return <UserList users={data} />;
+   }
+   // ❌ Avoid: client useEffect fetch
+   ```
 
-- All migrations via Drizzle Kit (`drizzle-kit push` / `drizzle-kit generate`)
-- Never modify the SQLite database directly
-- Add indexes for all foreign keys and frequent query patterns
-- Use `text` type for all string fields (SQLite has no varchar limit)
-- Timestamps: `created_at`, `updated_at` (managed by Drizzle defaults)
+3. **Server Actions** are the preferred mutation pattern:
+   ```ts
+   "use server";
+   import { z } from "zod";
+   const schema = z.object({ email: z.string().email() });
+   export async function createUser(formData: FormData) {
+     const parsed = schema.parse(Object.fromEntries(formData));
+     await db.insert(users).values(parsed);
+     revalidatePath("/users");
+   }
+   ```
 
-## Component Rules
+4. **Database access** through Drizzle only:
+   - No raw SQL strings
+   - Migrations via `drizzle-kit generate` + `drizzle-kit migrate`
+   - Index foreign keys and frequent query columns
 
-- Server components by default; add `"use client"` only when needed
-- Fetch data in server components or Server Actions, not in client effects
-- Use React Server Components for data-fetching pages
-- Loading states via `loading.tsx` files, errors via `error.tsx`
-- Form validation via Server Actions + Zod, not client-only
+5. **Error boundaries:** Every route segment gets `error.tsx` + `loading.tsx`
 
-## Code Style
+6. **Auth checks** in middleware (`src/middleware.ts`) and Server Actions:
+   ```ts
+   import { auth } from "@/lib/auth";
+   export default auth((req) => { /* route protection logic */ });
+   ```
 
-- Strict TypeScript: no `any`, no `// @ts-ignore`
-- Prefer `const` over `let`, no `var`
-- Early returns over nested if-else
-- Async/await over .then() chains
-- Named exports over default exports
-- Destructure props in function parameters
+## Naming & Conventions
 
-## Testing
+- **Files:** kebab-case (`user-profile.tsx`, `api-keys.ts`)
+- **Components:** PascalCase (`UserProfile`)
+- **Functions:** camelCase (`getUserById`)
+- **DB tables:** snake_case (`user_sessions`)
+- **API routes:** RESTful (`app/api/users/[id]/route.ts`)
+- **Server Actions:** verb-noun (`createUser`, `updateProfile`)
+- **Env vars:** UPPER_SNAKE_CASE (`DATABASE_URL`, `AUTH_SECRET`)
 
-- Unit tests: Vitest (co-located `*.test.ts`)
-- Integration tests: Vitest with in-memory SQLite
-- E2E tests: Playwright (`e2e/` directory)
-- Test database: separate Turso database or `:memory:` SQLite
-- Run before push: `pnpm test && pnpm test:e2e`
+## Testing Standards
 
-## Git Workflow
+| Layer | Tool | Pattern |
+|---|---|---|
+| Unit | Vitest | `*.test.ts` co-located |
+| Integration | Vitest | In-memory SQLite |
+| E2E | Playwright | `e2e/*.spec.ts` |
+| Run | `pnpm test && pnpm test:e2e` | Before every push |
 
-- Main branch: `main` (protected, requires PR review)
-- Branch naming: `feat/description`, `fix/description`, `chore/description`
-- Commit messages: Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`)
-- PR title must match commit convention
-- Squash merge into main
+## Performance Budgets
+
+- JS bundle per page: < 100 KB
+- API response (p99): < 200 ms
+- Lighthouse score: > 90 across all categories
+- DB query (p99): < 50 ms (index all query columns)
+
+## AI Agent Behavior
+
+When working in this project, Claude Code will:
+
+1. **Read first** — understand the schema and existing patterns before making changes
+2. **TypeScript strict** — never disable type checking; fix types instead
+3. **Test before commit** — run `pnpm test` before creating a commit
+4. **Server-first mindset** — prefer Server Components, move to client only when interaction demands it
+5. **DB safety** — never run `drizzle-kit push` on production; use `generate` + manual migration review
